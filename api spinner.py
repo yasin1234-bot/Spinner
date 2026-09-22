@@ -1,6 +1,6 @@
 # ============================================================
 # FF SPINNER API - OB55 PRO - @XEROX_MODS
-# Flask Version for Termux
+# Flask Version for Termux + Vercel
 # ============================================================
 
 import sys
@@ -17,7 +17,6 @@ from flask import Flask, request, jsonify, send_from_directory
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
-import blackboxprotobuf
 
 # ================= PROTOBUF IMPORT =================
 try:
@@ -38,7 +37,15 @@ app = Flask(__name__)
 
 # ================= FOLDERS =================
 RESULT_FOLDER = "SEXTYMODS SPINNER RESULT"
-os.makedirs(RESULT_FOLDER, exist_ok=True)
+try:
+    os.makedirs(RESULT_FOLDER, exist_ok=True)
+    _test = os.path.join(RESULT_FOLDER, ".wt")
+    with open(_test, "w") as _f:
+        _f.write("ok")
+    os.remove(_test)
+except Exception:
+    RESULT_FOLDER = "/tmp/SEXTYMODS SPINNER RESULT"
+    os.makedirs(RESULT_FOLDER, exist_ok=True)
 
 ALL_ITEMS_FILE = os.path.join(RESULT_FOLDER, "all_items.json")
 FAILED_FILE    = os.path.join(RESULT_FOLDER, "failed_accounts.json")
@@ -82,7 +89,6 @@ ULTRA_RARE_IDS = {710047022}
 
 # ================= ASYNC HELPER FOR FLASK =================
 def run_async(coro):
-    """Run async function from sync Flask route safely inside threads."""
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
@@ -92,6 +98,101 @@ def run_async(coro):
             loop.close()
         except Exception:
             pass
+
+
+# ================= MANUAL PROTOBUF PARSER =================
+# blackboxprotobuf এর বিকল্প — কোনো external dependency নেই
+def decode_varint(data, pos):
+    result = 0
+    shift = 0
+    while pos < len(data):
+        b = data[pos]
+        result |= (b & 0x7F) << shift
+        pos += 1
+        if not (b & 0x80):
+            return result, pos
+        shift += 7
+        if shift > 63:
+            raise ValueError("Varint too long")
+    raise ValueError("Truncated varint")
+
+
+def parse_protobuf_fields(data):
+    """
+    Simple protobuf parser.
+    Returns dict {field_number: value}
+    value: int | bytes | str | nested dict
+    """
+    fields = {}
+    pos = 0
+    n = len(data)
+    while pos < n:
+        try:
+            tag, pos = decode_varint(data, pos)
+        except Exception:
+            break
+
+        field_num = tag >> 3
+        wire_type = tag & 0x07
+
+        if field_num == 0:
+            break
+
+        try:
+            if wire_type == 0:  # varint
+                val, pos = decode_varint(data, pos)
+                fields[field_num] = val
+
+            elif wire_type == 2:  # length-delimited
+                length, pos = decode_varint(data, pos)
+                if pos + length > n:
+                    break
+                raw = data[pos:pos + length]
+                pos += length
+
+                # try nested message
+                nested = None
+                if len(raw) > 0:
+                    try:
+                        candidate = parse_protobuf_fields(raw)
+                        if candidate:
+                            nested = candidate
+                    except Exception:
+                        nested = None
+
+                if nested is not None:
+                    fields[field_num] = nested
+                else:
+                    try:
+                        s = raw.decode("utf-8")
+                        if all(32 <= ord(c) < 127 for c in s):
+                            fields[field_num] = s
+                        else:
+                            fields[field_num] = raw
+                    except Exception:
+                        fields[field_num] = raw
+
+            elif wire_type == 5:  # 32-bit
+                if pos + 4 > n: break
+                pos += 4
+            elif wire_type == 1:  # 64-bit
+                if pos + 8 > n: break
+                pos += 8
+            else:
+                break
+        except Exception:
+            break
+
+    return fields
+
+
+def blackbox_decode(data):
+    """Replacement for blackboxprotobuf.decode_message"""
+    try:
+        fields = parse_protobuf_fields(data)
+        return fields, {}
+    except Exception:
+        return {}, {}
 
 
 # ================= HELPERS =================
@@ -127,26 +228,32 @@ def log(msg):
     ts = datetime.now().strftime("[%H:%M:%S]")
     clean = re.sub(r'\033\[[0-9;]*m', '', f"{ts} {msg}")
     print(clean, flush=True)
-    with log_file_lock:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(clean + "\n")
+    try:
+        with log_file_lock:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(clean + "\n")
+    except Exception:
+        pass
 
 
 def save_all_item(uid, pwd, item_id, item_name):
     entry = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
              "guestUid": uid, "guestPass": pwd,
              "item_id": item_id, "item_name": item_name}
-    with all_items_lock:
-        data_list = []
-        if os.path.exists(ALL_ITEMS_FILE):
-            try:
-                with open(ALL_ITEMS_FILE) as f:
-                    c = f.read()
-                    if c: data_list = json.loads(c)
-            except: pass
-        data_list.append(entry)
-        with open(ALL_ITEMS_FILE, 'w') as f:
-            json.dump(data_list, f, indent=4)
+    try:
+        with all_items_lock:
+            data_list = []
+            if os.path.exists(ALL_ITEMS_FILE):
+                try:
+                    with open(ALL_ITEMS_FILE) as f:
+                        c = f.read()
+                        if c: data_list = json.loads(c)
+                except: pass
+            data_list.append(entry)
+            with open(ALL_ITEMS_FILE, 'w') as f:
+                json.dump(data_list, f, indent=4)
+    except Exception:
+        pass
 
 
 def save_categorized_item(uid, pwd, item_id, item_name, filename):
@@ -155,31 +262,37 @@ def save_categorized_item(uid, pwd, item_id, item_name, filename):
              "guestUid": uid, "guestPass": pwd,
              "item_id": item_id, "item_name": item_name}
     lock = category_locks.get(filename, threading.Lock())
-    with lock:
-        data_list = []
-        if os.path.exists(fp):
-            try:
-                with open(fp) as f:
-                    c = f.read()
-                    if c: data_list = json.loads(c)
-            except: pass
-        data_list.append(entry)
-        with open(fp, 'w') as f:
-            json.dump(data_list, f, indent=4)
+    try:
+        with lock:
+            data_list = []
+            if os.path.exists(fp):
+                try:
+                    with open(fp) as f:
+                        c = f.read()
+                        if c: data_list = json.loads(c)
+                except: pass
+            data_list.append(entry)
+            with open(fp, 'w') as f:
+                json.dump(data_list, f, indent=4)
+    except Exception:
+        pass
 
 
 def append_failed_account(acc):
-    with failed_file_lock:
-        failed_list = []
-        if os.path.exists(FAILED_FILE):
-            try:
-                with open(FAILED_FILE) as f:
-                    c = f.read().strip()
-                    if c: failed_list = json.loads(c)
-            except: pass
-        failed_list.append(acc)
-        with open(FAILED_FILE, 'w') as f:
-            json.dump(failed_list, f, indent=2)
+    try:
+        with failed_file_lock:
+            failed_list = []
+            if os.path.exists(FAILED_FILE):
+                try:
+                    with open(FAILED_FILE) as f:
+                        c = f.read().strip()
+                        if c: failed_list = json.loads(c)
+                except: pass
+            failed_list.append(acc)
+            with open(FAILED_FILE, 'w') as f:
+                json.dump(failed_list, f, indent=2)
+    except Exception:
+        pass
 
 
 # ================= TOKEN =================
@@ -361,7 +474,7 @@ async def spin_account(uid: str, password: str, server_name: str = "ind", custom
                     "reason": f"Spin HTTP {status}", "raw_status": status}
 
         try:
-            decoded, _ = blackboxprotobuf.decode_message(spin_resp)
+            decoded, _ = blackbox_decode(spin_resp)
             item_id = find_item_id(decoded)
             if item_id is None:
                 append_failed_account({"uid": uid, "password": password, "reason": "No item ID"})
@@ -375,11 +488,15 @@ async def spin_account(uid: str, password: str, server_name: str = "ind", custom
             save_categorized_item(uid, password, item_id, item_name, target_file)
 
             if category == "ULTRA RARE":
-                with open(SUMMARY_FILE, "a", encoding="utf-8") as f:
-                    f.write(f"[ULTRA RARE] UID: {uid} | Pass: {password} | Item: {item_name} | ID: {item_id}\n")
+                try:
+                    with open(SUMMARY_FILE, "a", encoding="utf-8") as f:
+                        f.write(f"[ULTRA RARE] UID: {uid} | Pass: {password} | Item: {item_name} | ID: {item_id}\n")
+                except: pass
             elif item_id in RARE_ITEMS_DB:
-                with open(SUMMARY_FILE, "a", encoding="utf-8") as f:
-                    f.write(f"[{category}] UID: {uid} | Pass: {password} | Item: {item_name} | ID: {item_id}\n")
+                try:
+                    with open(SUMMARY_FILE, "a", encoding="utf-8") as f:
+                        f.write(f"[{category}] UID: {uid} | Pass: {password} | Item: {item_name} | ID: {item_id}\n")
+                except: pass
 
             log(f"[OK] UID {uid} -> {item_name} (ID: {item_id}) | {category}")
 

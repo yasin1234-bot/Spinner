@@ -1,5 +1,4 @@
 flask
 aiohttp
 pycryptodome
-blackboxprotobuf==1.0.1
-protobuf==3.20.3
+protobuf
