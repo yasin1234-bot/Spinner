@@ -497,11 +497,13 @@ def download(filename):
 
 
 # ============================================================
-# ================= RUN ======================================
+# ================= RUN (Termux + Vercel Both) ===============
 # ============================================================
+handler = app
+
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("  🔥 FF SPINNER API - OB55 PRO - @XEROX_MODS")
+    print("  🔥 FF SPINNER API - OB55 PRO - YASIN")
     print("="*60)
     print("  Server running at:  http://0.0.0.0:8000")
     print("  Test Spin:          http://localhost:8000/naruto-spin?uid=UID&pass=PASS&server_name=ind")
