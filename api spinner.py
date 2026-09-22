@@ -12,7 +12,6 @@ import re
 import time
 import threading
 from datetime import datetime
-from functools import wraps
 
 from flask import Flask, request, jsonify, send_from_directory
 
@@ -83,13 +82,16 @@ ULTRA_RARE_IDS = {710047022}
 
 # ================= ASYNC HELPER FOR FLASK =================
 def run_async(coro):
-    """Run async function from sync Flask route."""
+    """Run async function from sync Flask route safely inside threads."""
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(coro)
     finally:
-        loop.close()
+        try:
+            loop.close()
+        except Exception:
+            pass
 
 
 # ================= HELPERS =================
@@ -423,8 +425,11 @@ def naruto_spin_get():
             "reason": f"server must be one of {list(SERVERS.keys())}"
         }), 400
 
-    result = run_async(spin_account(uid, password, server_name, hex_payload))
-    return jsonify(result)
+    try:
+        result = run_async(spin_account(uid, password, server_name, hex_payload))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "reason": f"Server error: {e}"}), 500
 
 
 @app.route("/naruto-spin", methods=["POST"])
@@ -445,8 +450,11 @@ def naruto_spin_post():
             "reason": f"server must be one of {list(SERVERS.keys())}"
         }), 400
 
-    result = run_async(spin_account(uid, password, server_name, custom_hex))
-    return jsonify(result)
+    try:
+        result = run_async(spin_account(uid, password, server_name, custom_hex))
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "reason": f"Server error: {e}"}), 500
 
 
 @app.route("/servers", methods=["GET"])
